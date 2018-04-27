@@ -1,0 +1,139 @@
+#!/bin/bash
+################################################################################
+# SLURM Accounting AD Integration
+# Garret Huntress (ghuntress@carnegiescience.edu)
+# August 2016
+################################################################################
+#
+################################################################################
+
+###########
+# Globals #
+###########
+Cluster=rocks-cluster
+Fairshare=10
+Debug=true
+
+###################
+# Array Functions #
+###################
+arr_contains () {
+	local array="$1[@]"
+	local seeking=$2
+	arr_position=0
+	for element in "${!array}"
+	do
+		if [[ $element == $seeking ]]
+		then
+			if ${Debug}; then echo "found at position: $arr_position"; fi
+			return 0
+		fi
+		let arr_position=$arr_position+1
+	done
+	return 1
+}
+
+###################
+# SLURM Functions #
+###################
+slurm_get_buyins ()
+{
+	### Handle Arguments
+
+	### Get Buyins
+	Buyins=($(sacctmgr -n -P list associations cluster=${Cluster} parent=root format=Account))
+}
+
+slurm_get_groups ()
+{
+	### Handle Arguments
+	local Buyin=$1
+
+	### Get Groups
+	Groups=($(sacctmgr -n -P list associations cluster=${Cluster} parent=${Buyin} format=Account))
+}
+
+slurm_get_users ()
+{
+	### Handle Arguments
+	local Group=$1
+
+	### Get Users
+	Users=($(sacctmgr -n -P show account ${Group} withassoc cluster=${Cluster} parent="" format=User))
+
+}
+
+#######################
+# Directory Functions #
+#######################
+ad_get_users ()
+{
+	### Handle Arguments
+	local Group=$1
+
+	# Get Group Users
+	local TmpString=`getent group ${Group}  | cut -d ':' -f 4`
+
+	# Handle IFS
+	OLDIFS=$IFS
+	IFS=','
+
+	# Read group users into array
+	read -r -a AD_Users <<< "$TmpString"
+
+	# Reset IFS
+	IFS=$OLDIFS
+}
+
+########
+# Main #
+########
+
+### Get Cluster Buy-ins
+slurm_get_buyins
+
+### Process Buy-ins
+for Buyin in "${Buyins[@]}"
+do
+	if ${Debug}; then echo "Processing Buyin ${Buyin}"; fi
+
+	### Get Groups under current Buy-in
+	slurm_get_groups $Buyin
+
+	### Process Buy-in Groups
+	for Group in "${Groups[@]}"
+	do
+		if ${Debug}; then echo "Processing Buyin ${Buyin}: Group ${Group}"; fi
+
+		### Get Users under current Group, both in Slurm and AD
+		slurm_get_users $Group
+		ad_get_users $Group
+
+		### Process Slurm Users
+		for User in "${Users[@]}"
+		do
+			### Check if Slurm user is in AD Group (in case of removal)
+			if ! arr_contains AD_Users "$User"
+			then
+				### Slurm user not found in AD group
+				### Remove from Slurm group
+				sacctmgr -i -Q delete user name=${User} account=${Group}
+			fi
+		done
+
+		### Re-acquire updated Slurm users for current group
+		slurm_get_users $Group
+
+		### Process AD Users
+		for User in "${AD_Users[@]}"
+		do
+			### Check if AD user is in Slurm group (in case of addition)
+			if ! arr_contains Users $User
+			then
+				### AD user not found in Slurm group
+				### Add user to Slurm group
+				sacctmgr -i -Q create user name=${User} account=${Group} defaultaccount=${Group} fairshare=${Fairshare}
+			fi
+		done
+	done
+done
