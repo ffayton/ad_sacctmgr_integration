@@ -90,6 +90,7 @@ ad_get_users ()
 ########
 
 ### Get Cluster Buy-ins
+set -xa
 slurm_get_buyins
 
 ### Process Buy-ins
@@ -117,7 +118,7 @@ do
 			then
 				### Slurm user not found in AD group
 				### Remove from Slurm group
-				sacctmgr -i -Q delete user name=${User} account=${Group}
+				echo sacctmgr -i -Q delete user name=${User} account=${Group}
 			fi
 		done
 
@@ -132,7 +133,7 @@ do
 			then
 				### AD user not found in Slurm group
 				### Add user to Slurm group
-				sacctmgr -i -Q create user name=${User} account=${Group} defaultaccount=${Group} fairshare=${Fairshare}
+				echo sacctmgr -i -Q create user name=${User} account=${Group} defaultaccount=${Group} fairshare=${Fairshare}
 			fi
 		done
 	done
